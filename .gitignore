@@ -6,7 +6,6 @@ dist-ssr/
 .env
 .env.*
 !.env.example
-
 # Logs
 logs
 *.log
@@ -56,6 +55,7 @@ htmlcov/
 *.njsproj
 *.sln
 *.sw?
+<<<<<<< HEAD
 
 # Cache files
 .cache/
@@ -69,3 +69,5 @@ backend/cache/
 # Frontend specific
 frontend/.env
 frontend/coverage/
+=======
+>>>>>>> 0eee5f58b08dce8307abc1b0cbb304d08f8aff55
