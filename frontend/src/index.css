@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global styles for dark/light mode transitions */
+html {
+  transition: background-color 0.3s, color 0.3s;
+}
+  
+body {
+  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+  background-color: white;
+  color: #1a202c;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.dark body {
+  background-color: #111827;
+  color: #f3f4f6;
+}
+  
+/* Apply transitions to common elements */
+*, ::before, ::after {
+  transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+}
+  
+/* Improve transition experience for common UI elements */
+button, a, input, textarea, select {
+  transition: all 0.3s ease;
+}
+
+/* Custom classes for common theme patterns */
+.card-light-dark {
+  background-color: white;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.dark .card-light-dark {
+  background-color: #1f2937;
+}
+
+.card-light-dark:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
