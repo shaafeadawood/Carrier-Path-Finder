@@ -5,17 +5,27 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from supabase import create_client, Client
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if available
+load_dotenv()
 
 # Import our custom modules
 from core.file_processing import extract_text_from_file
 from core.ai_helpers import parse_cv_text
-from gemini_helpers import parse_cv_with_gemini
+from core.gemini_helpers import parse_cv_with_gemini
 
 # Import API modules
-from recommendation_api import add_recommendation_routes
+from backend.api.recommendation_api import add_recommendation_routes
 from api.cv_parser import add_cv_routes
 from api.roadmap_api import add_roadmap_routes
-from api.contact_api import add_contact_routes
+from api.contact_api import router as contact_router
+from api.auth_api import router as auth_router
+from api.admin_api import router as admin_router
+
+# Import our improved CV parser
+from api.cv_parser import router as cv_parser_router
 
 app = FastAPI(title="Career Path Finder API", 
               description="Backend API for the Career Path Finder application",
@@ -38,9 +48,18 @@ class Profile(BaseModel):
     interests: str
     skills: List[str]
 
-SUPABASE_URL = "https://vdbgrhvcduaxabvbwxui.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZkYmdyaHZjZHVheGFidmJ3eHVpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTU5NTMwMiwiZXhwIjoyMDcxMTcxMzAyfQ.j5-kqS9JnFLdeQ9NarC12yNr67SGrvNzKkDyYA18WWM"
+# Get Supabase credentials from environment variables
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
+# Check if environment variables are set
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("Warning: SUPABASE_URL or SUPABASE_SERVICE_KEY not found in environment variables.")
+    print("Falling back to default values. This is not recommended for production.")
+    SUPABASE_URL = "https://vdbgrhvcduaxabvbwxui.supabase.co"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZkYmdyaHZjZHVheGFidmJ3eHVpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTU5NTMwMiwiZXhwIjoyMDcxMTcxMzAyfQ.j5-kqS9JnFLdeQ9NarC12yNr67SGrvNzKkDyYA18WWM"
+
+print(f"Connecting to Supabase at {SUPABASE_URL}")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
@@ -132,7 +151,32 @@ from workflows.langgraph_workflow import run_workflow_with_cv
 add_recommendation_routes(app)
 add_cv_routes(app)
 add_roadmap_routes(app)
-add_contact_routes(app, supabase)
+
+# Add our improved CV parser routes with dependency on Supabase
+# Override the get_supabase dependency to return our already created client
+from cv_parser import get_supabase as cv_parser_get_supabase
+
+# Override the dependency to return our configured client
+def get_supabase_override():
+    return supabase
+
+app.dependency_overrides[cv_parser_get_supabase] = get_supabase_override
+app.include_router(cv_parser_router, prefix="/api")
+
+# Add contact API router with Supabase dependency override
+from api.contact_api import get_supabase as contact_get_supabase
+app.dependency_overrides[contact_get_supabase] = get_supabase_override
+app.include_router(contact_router)
+
+# Add auth API router with Supabase dependency override
+from api.auth_api import get_supabase as auth_get_supabase
+app.dependency_overrides[auth_get_supabase] = get_supabase_override
+app.include_router(auth_router)
+
+# Add admin API router with Supabase dependency override
+from api.admin_api import get_supabase as admin_get_supabase
+app.dependency_overrides[admin_get_supabase] = get_supabase_override
+app.include_router(admin_router)
 
 # Legacy CV Upload and Parsing Endpoint (kept for backward compatibility)
 @app.post("/api/upload-cv")

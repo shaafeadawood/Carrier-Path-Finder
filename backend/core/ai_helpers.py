@@ -12,10 +12,19 @@ import json
 load_dotenv()
 
 # Configure Gemini API
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    print("WARNING: GOOGLE_API_KEY environment variable not set. Gemini AI features will not work.")
+    print("Please set GOOGLE_API_KEY in your environment or .env file.")
+else:
+    genai.configure(api_key=api_key)
 
 def get_gemini_model():
     """Get the Gemini model for text generation."""
+    if not os.getenv("GOOGLE_API_KEY"):
+        print("ERROR: Cannot initialize Gemini model - GOOGLE_API_KEY not set")
+        return None
+        
     # Try using a model with higher quota limits
     try:
         return genai.GenerativeModel('gemini-pro')
@@ -25,7 +34,11 @@ def get_gemini_model():
             return genai.GenerativeModel('gemini-1.0-pro')
         except Exception as e:
             print(f"Error with gemini-1.0-pro model: {e}")
-            return genai.GenerativeModel('gemini-1.5-flash')
+            try:
+                return genai.GenerativeModel('gemini-1.5-flash')
+            except Exception as e:
+                print(f"Error with all Gemini models: {e}")
+                return None
 
 async def parse_cv_text(cv_text):
     """
@@ -38,6 +51,26 @@ async def parse_cv_text(cv_text):
         dict: Structured CV data including name, education, skills, etc.
     """
     model = get_gemini_model()
+    
+    # Check if model is None (API key not set)
+    if model is None:
+        print("Cannot parse CV with AI: Gemini model not available (GOOGLE_API_KEY not set)")
+        # Use fallback extraction immediately
+        return {
+            "api_error": "Gemini API not configured - GOOGLE_API_KEY not set",
+            "message": "AI parsing unavailable. Using basic extraction with limited accuracy.",
+            "parsed_data": {
+                "name": extract_name(cv_text),
+                "email": extract_email(cv_text),
+                "phone": extract_phone(cv_text),
+                "skills": extract_skills(cv_text),
+                "education": extract_education(cv_text),
+                "work_experience": extract_experience(cv_text),
+                "projects": extract_projects(cv_text),
+                "interests": extract_interests(cv_text),
+                "note": "This is a simplified extraction. For better results, configure the AI service."
+            }
+        }
     
     # Craft a detailed prompt for CV parsing
     prompt = f"""
@@ -60,8 +93,44 @@ async def parse_cv_text(cv_text):
     
     try:
         print("Sending request to Gemini API...")
-        response = model.generate_content(prompt)
-        print("Received response from Gemini API")
+        # Use a simple timer to avoid hanging indefinitely
+        import threading
+        import time
+        
+        response = None
+        api_error = None
+        
+        def call_api():
+            nonlocal response, api_error
+            try:
+                response = model.generate_content(prompt)
+                print("Received response from Gemini API")
+            except Exception as e:
+                api_error = e
+                print(f"Error in Gemini API thread: {e}")
+        
+        # Run the API call in a separate thread
+        api_thread = threading.Thread(target=call_api)
+        api_thread.daemon = True  # Allow the thread to be terminated when the main thread exits
+        api_thread.start()
+        
+        # Wait for up to 20 seconds
+        timeout = 20
+        start_time = time.time()
+        while api_thread.is_alive() and time.time() - start_time < timeout:
+            # Wait for small intervals and check if the thread completed
+            await asyncio.sleep(0.5)
+            
+        # Check if we timed out or got a response
+        if api_thread.is_alive():
+            print(f"Gemini API request timed out after {timeout} seconds")
+            raise Exception(f"API timeout: Gemini request took longer than {timeout} seconds to respond")
+        
+        if api_error:
+            raise api_error
+            
+        if not response:
+            raise Exception("No response received from Gemini API")
         
         # Try to parse the response as JSON
         try:
@@ -113,7 +182,7 @@ async def parse_cv_text(cv_text):
         }
 
 def extract_name(text):
-    """Extract a potential name from the CV text"""
+    """Extract a potential name from the CV text with robust accuracy and safeguards against common false positives"""
     import re
     
     if not text:
@@ -125,39 +194,173 @@ def extract_name(text):
     if not lines:
         return "Name not detected"
     
-    # Try to find a line that looks like a name (not all caps, not too long)
-    for i, line in enumerate(lines[:10]):  # Check first 10 lines
+    # Comprehensive exclusion list for false positives
+    exclude_patterns = [
+        r'^(RESUME|CURRICULUM\s+VITAE|CV)$',  # Document headers
+        r'^(ABOUT\s+ME|ABOUT|PROFILE|BIO|BIOGRAPHY|SUMMARY|PERSONAL\s+PROFILE)$',  # Section headers
+        r'^(PERSONAL\s+INFORMATION|CONTACT|CONTACT\s+INFORMATION|OBJECTIVE|CAREER\s+OBJECTIVE)$',  # More section headers
+        r'^(PROFESSIONAL\s+SUMMARY|CAREER\s+SUMMARY|EXPERIENCE\s+SUMMARY)$',  # Summary headers
+        r'@',  # Emails
+        r'^\+?\d',  # Phone numbers
+        r'^http',  # URLs
+        r'^www\.',  # URLs
+        r'^[A-Z\s]{7,}$',  # All uppercase text (likely headers)
+        r'\b(docx|pdf|doc)\b',  # File extensions
+        r'\b(Page|Home|Contact|Resume|CV)\b',  # Web page links/navigation
+        r'\b(LinkedIn|GitHub|Twitter|Facebook|Instagram)\b',  # Social media references
+        r'^[^a-zA-Z]*$',  # Strings without any letters
+    ]
+    
+    # Additional exclusion list - exact matches for common false positives
+    excluded_exact_names = {
+        "about me", "profile", "personal profile", "curriculum vitae", "resume", 
+        "professional profile", "personal information", "contact information",
+        "personal details", "professional summary", "career summary", "career objective",
+        "professional experience", "education", "skills", "experience",
+        "summary", "objective", "professional objective", "contact details",
+        "personal statement", "professional background", "career profile",
+        "about", "bio", "biography", "qualification profile"
+    }
+    
+    # FIRST TIER: Look for explicit "Name:" pattern which is most reliable
+    name_label_patterns = [
+        r'(?:name|full name)[:\s-]+([^,\n]{2,40})',
+        r'(?:candidate|applicant)[:\s-]+([^,\n]{2,40})',
+    ]
+    
+    # Check the entire document for explicit name patterns
+    for pattern in name_label_patterns:
+        for line in lines[:30]:  # Check first 30 lines
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match and len(match.group(1).strip()) > 3:  # Ensure name is reasonable length
+                potential_name = match.group(1).strip()
+                # Check against exclusion patterns
+                if (all(not re.search(exclude, potential_name, re.IGNORECASE) for exclude in exclude_patterns) and 
+                    potential_name.lower() not in excluded_exact_names):
+                    # Verify it looks like a name (capital letters for first letters in words)
+                    words = potential_name.split()
+                    if (len(words) >= 1 and len(words) <= 5 and
+                        sum(1 for word in words if len(word) > 0 and word[0].isupper()) >= 1):
+                        return potential_name
+    
+    # SECOND TIER: look for name based on typical formatting in first few lines
+    # Names are typically at the very top of a CV
+    for i, line in enumerate(lines[:7]):  # Expanded to first 7 lines
         line = line.strip()
-        # Skip empty lines, headers like "RESUME" or "CV", and lines that are all uppercase
-        # Also skip common section headers that might be at the beginning
-        if (line and 
-            not re.match(r'^(RESUME|CV|CURRICULUM\s+VITAE|ABOUT ME|PROFILE|PERSONAL INFORMATION|CONTACT)$', line, re.IGNORECASE) and
-            not line.isupper() and
-            len(line) < 40 and  # Names are typically not very long
-            not line.startswith('http') and  # Skip URLs
-            not '@' in line and  # Skip email addresses
-            not re.match(r'^\+?\d', line) and  # Skip lines starting with phone numbers
-            len(line.split()) >= 2):  # Name usually has at least first and last name
+        # Skip empty lines or those matching exclusion patterns
+        if not line or any(re.search(pattern, line, re.IGNORECASE) for pattern in exclude_patterns):
+            continue
+        
+        # Skip common false positive strings
+        if line.lower() in excluded_exact_names:
+            continue
+            
+        # A real name typically has 2-4 words, with proper capitalization
+        words = line.split()
+        name_quality_score = 0
+        
+        # Calculate a "name quality score" to determine how likely this is a real name
+        if 2 <= len(words) <= 4:
+            name_quality_score += 3  # 2-4 words is typical for names
+        elif len(words) == 1 and len(line) > 3 and len(line) <= 20:
+            name_quality_score += 1  # Single word could be just first or last name
+        else:
+            name_quality_score -= 2  # Unusual word count for a name
+            
+        # Check for proper capitalization of a name
+        capitalized_words = sum(1 for word in words if len(word) > 0 and word[0].isupper())
+        if capitalized_words == len(words) and len(words) >= 2:
+            name_quality_score += 3  # All words properly capitalized
+        elif capitalized_words >= 1:
+            name_quality_score += 1  # At least some capitalization
+            
+        # Length checks
+        if 10 <= len(line) <= 35:
+            name_quality_score += 2  # Good length for a name
+        elif len(line) < 10:
+            name_quality_score += 0  # Short but could still be valid
+        else:
+            name_quality_score -= 2  # Too long for a typical name
+            
+        # Check for strange characters that wouldn't be in a name
+        if re.search(r'[^a-zA-Z\s.\'-]', line):
+            name_quality_score -= 3  # Contains characters not typically in names
+            
+        # Bias in favor of early lines (names are usually at the very top)
+        name_quality_score += (5 - i) if i < 5 else 0
+        
+        # If the line passes our name quality threshold
+        if name_quality_score >= 5:
             return line
     
-    # Try to find a pattern that looks like "Name: John Smith" or "Name - John Smith"
-    for line in lines[:15]:  # Check more lines for this pattern
-        name_match = re.search(r'(?:name|full name|candidate)[:\s-]+([^,\n]{3,40})', line, re.IGNORECASE)
-        if name_match:
-            return name_match.group(1).strip()
+    # THIRD TIER: Look for a personal information section which may contain name
+    for i, line in enumerate(lines):
+        if re.search(r'personal\s+information|contact\s+information|personal\s+details', line, re.IGNORECASE):
+            # Check the next few lines for a name pattern
+            for j in range(i+1, min(i+8, len(lines))):
+                if j < len(lines):  # Ensure we're in bounds
+                    name_match = re.search(r'(?:name|full name)[:\s-]+([^,\n]{2,40})', lines[j], re.IGNORECASE)
+                    if name_match:
+                        potential_name = name_match.group(1).strip()
+                        if potential_name.lower() not in excluded_exact_names:
+                            return potential_name
+                        
+                    # Also check for lines that just have a properly formatted name without a label
+                    potential_name_line = lines[j].strip()
+                    words = potential_name_line.split()
+                    if (2 <= len(words) <= 4 and
+                        all(word[0].isupper() for word in words if len(word) > 1) and
+                        len(potential_name_line) <= 40 and
+                        potential_name_line.lower() not in excluded_exact_names):
+                        return potential_name_line
     
-    # If we still haven't found anything, look for capitalized words that might be a name
-    for i, line in enumerate(lines[:10]):
-        words = line.split()
-        if len(words) >= 2 and len(words) <= 5:  # Typical name length
-            if all(word[0].isupper() for word in words if len(word) > 1):  # Check if words are capitalized
-                return line.strip()
+    # FOURTH TIER: Use NLP-style name recognition heuristics for common name patterns
+    name_patterns = [
+        # Common first + last name pattern with correct capitalization
+        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b',
+        
+        # Patterns with middle initials
+        r'\b([A-Z][a-z]+\s+[A-Z]\.\s+[A-Z][a-z]+)\b',
+        
+        # Pattern with titles
+        r'\b((?:Mr\.|Ms\.|Mrs\.|Dr\.|Prof\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b',
+    ]
+    
+    # Search for these patterns in the first 15 lines
+    for pattern in name_patterns:
+        for i, line in enumerate(lines[:15]):
+            if i == 0:  # Give more weight to the very first line
+                matches = re.findall(pattern, line)
+                if matches:
+                    for match in matches:
+                        potential_name = match.strip()
+                        if (len(potential_name) > 4 and len(potential_name) <= 40 and
+                            potential_name.lower() not in excluded_exact_names):
+                            return potential_name
+            else:
+                match = re.search(pattern, line)
+                if match:
+                    potential_name = match.group(1).strip()
+                    if (len(potential_name) > 4 and len(potential_name) <= 40 and
+                        potential_name.lower() not in excluded_exact_names):
+                        return potential_name
+    
+    # If we still haven't found a name, check first non-empty line with careful filtering
+    for line in lines[:5]:
+        line_clean = line.strip()
+        if (line_clean and 
+            4 <= len(line_clean) <= 40 and
+            not line_clean.isupper() and  # Not all uppercase (likely a header)
+            " " in line_clean and  # Contains at least one space (first + last name)
+            all(not re.search(exclude, line_clean, re.IGNORECASE) for exclude in exclude_patterns) and
+            line_clean.lower() not in excluded_exact_names):
             
-    # Fallback to first non-empty line
-    for line in lines:
-        if line.strip():
-            return line.strip()
+            # Final check: at least one word should be capitalized
+            words = line_clean.split()
+            if any(word[0].isupper() for word in words if len(word) > 0):
+                return line_clean
             
+    # Nothing reliable found
     return "Name not detected"
 
 def extract_email(text):

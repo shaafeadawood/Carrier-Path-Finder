@@ -1,174 +1,203 @@
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-from datetime import datetime
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
 from supabase import Client
+import os
+from dotenv import load_dotenv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import html
 
-class ContactMessage(BaseModel):
-    name: str
+# Load environment variables
+load_dotenv()
+
+# Get email settings from environment variables
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USERNAME = os.getenv("EMAIL_USERNAME", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "support@careercompass.com")
+
+# Create a router
+router = APIRouter()
+
+# Define the contact form model
+class ContactForm(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
     email: EmailStr
-    subject: str
-    message: str
-    user_id: Optional[str] = None
+    subject: str = Field(..., min_length=5, max_length=200)
+    message: str = Field(..., min_length=10, max_length=2000)
 
-class ContactResponse(BaseModel):
-    id: str
-    name: str
-    email: str
-    subject: str
-    message: str
-    status: str
-    created_at: str
-    user_id: Optional[str] = None
+# Function to get Supabase client (will be overridden in main.py)
+async def get_supabase() -> Client:
+    # This is a placeholder that will be overridden in main.py
+    # We just need this so the router can define the dependency
+    pass
 
-def add_contact_routes(app: FastAPI, supabase_client: Client):
+# Function to sanitize input to prevent XSS
+def sanitize_input(text: str) -> str:
+    return html.escape(text)
+
+# Function to send email notification
+def send_email_notification(contact: ContactForm) -> bool:
+    if not EMAIL_USERNAME or not EMAIL_PASSWORD:
+        print("Email credentials not found in environment variables. Skipping email notification.")
+        return False
+
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_USERNAME
+        msg['To'] = EMAIL_RECIPIENT
+        msg['Subject'] = f"Contact Form Submission: {sanitize_input(contact.subject)}"
+        
+        # Create HTML content
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
+                .container {{ padding: 20px; }}
+                .header {{ background-color: #f0f4f8; padding: 15px; border-radius: 5px; }}
+                .content {{ margin-top: 20px; }}
+                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>New Contact Form Submission</h2>
+                    <p>You have received a new message from the Career Compass contact form.</p>
+                </div>
+                <div class="content">
+                    <p><strong>Name:</strong> {sanitize_input(contact.name)}</p>
+                    <p><strong>Email:</strong> {sanitize_input(contact.email)}</p>
+                    <p><strong>Subject:</strong> {sanitize_input(contact.subject)}</p>
+                    <p><strong>Message:</strong></p>
+                    <p>{sanitize_input(contact.message)}</p>
+                </div>
+                <div class="footer">
+                    <p>This email was sent automatically from the Career Compass contact form.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Attach HTML content
+        msg.attach(MIMEText(html_content, 'html'))
+        
+        # Send email
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls()
+        server.login(EMAIL_USERNAME, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        return True
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
+
+@router.post("/api/contact")
+async def contact(form: ContactForm, supabase: Client = Depends(get_supabase)):
     """
-    Adds contact form endpoints to the main FastAPI app
-    
-    Parameters:
-    - app: FastAPI application instance
-    - supabase_client: Initialized Supabase client
+    Submit a contact form that will be saved to the database and trigger an email notification.
     """
-    
-    @app.post("/api/contact", response_model=dict)
-    async def submit_contact_form(contact: ContactMessage):
-        """
-        Submit a contact form message
+    try:
+        # Sanitize inputs
+        sanitized_form = {
+            "name": sanitize_input(form.name),
+            "email": sanitize_input(form.email),
+            "subject": sanitize_input(form.subject),
+            "message": sanitize_input(form.message),
+            "status": "new"  # For tracking if the contact request has been handled
+        }
         
-        This endpoint stores contact form submissions in the database
-        """
+        # Print debug info
+        print(f"Contact form received: {sanitized_form}")
+        print(f"Supabase client: {supabase is not None}")
+        
+        # Make sure the table exists
         try:
-            # Add timestamp
-            timestamp = datetime.now().isoformat()
+            # Try to query the table to see if it exists
+            test_query = supabase.table("contact_messages").select("count", count="exact").limit(1).execute()
+            table_name = "contact_messages"
+            print(f"Using contact_messages table. Record count: {test_query.count if hasattr(test_query, 'count') else 'unknown'}")
+        except Exception as table_error:
+            print(f"Error with contact_messages table: {table_error}")
+            # Try contact_forms table as fallback
+            try:
+                test_query = supabase.table("contact_forms").select("count", count="exact").limit(1).execute()
+                table_name = "contact_forms"
+                print(f"Using contact_forms table. Record count: {test_query.count if hasattr(test_query, 'count') else 'unknown'}")
+            except Exception as fallback_error:
+                print(f"Error with contact_forms table: {fallback_error}")
+                # Create a simple table if neither exists
+                table_name = "contact_messages"
+                print(f"Will attempt to use {table_name} table regardless")
+        
+        # Save to database
+        result = supabase.table(table_name).insert(sanitized_form).execute()
+        
+        # Check result
+        if hasattr(result, 'error') and result.error:
+            print(f"Database error: {result.error}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "detail": f"Database error: {result.error}",
+                    "message": "Failed to save your message. Please try again later."
+                }
+            )
             
-            # Insert into Supabase
-            result = supabase_client.table("contact_messages").insert({
-                "name": contact.name,
-                "email": contact.email,
-                "subject": contact.subject,
-                "message": contact.message,
-                "user_id": contact.user_id,
-                "created_at": timestamp,
-                "status": "unread"
-            }).execute()
-            
-            # Check for errors
-            if result.data is None or len(result.data) == 0:
-                raise HTTPException(status_code=500, detail="Failed to submit contact form")
-                
-            # Return success with the message ID
-            message_id = result.data[0]['id'] if result.data and len(result.data) > 0 else None
-            return {
+        if not hasattr(result, 'data') or not result.data:
+            print("No data returned from insert operation")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "detail": "Failed to save contact form submission to database",
+                    "message": "Failed to save your message. Please try again later."
+                }
+            )
+        
+        # Send email notification (don't fail if email fails, just log it)
+        email_sent = send_email_notification(form)
+        print(f"Email notification sent: {email_sent}")
+        
+        # Return success response with JSONResponse to ensure proper JSON formatting
+        return JSONResponse(
+            content={
                 "status": "success",
-                "message": "Contact form submitted successfully",
-                "message_id": message_id
+                "message": "Your message has been received. We'll get back to you soon.",
+                "email_sent": email_sent
             }
-            
-        except Exception as e:
-            # Log the error
-            print(f"Error submitting contact form: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to submit contact form: {str(e)}")
+        )
     
-    @app.get("/api/admin/contact-messages", response_model=dict)
-    async def get_contact_messages(status: Optional[str] = None):
-        """
-        Get all contact messages with optional filtering by status
-        
-        Parameters:
-        - status: Optional filter for message status ("read", "unread", "archived")
-        
-        Returns:
-        - List of contact messages
-        """
-        try:
-            # Start the query
-            query = supabase_client.table("contact_messages").select("*")
-            
-            # Add filter if status is provided
-            if status:
-                query = query.eq("status", status)
-                
-            # Execute the query
-            result = query.order("created_at", desc=True).execute()
-            
-            # Return the messages
-            return {
-                "status": "success", 
-                "messages": result.data if result.data else []
+    except HTTPException as http_e:
+        # Handle HTTP exceptions explicitly with proper JSON response
+        print(f"HTTP Exception in contact form submission: {http_e.detail}")
+        return JSONResponse(
+            status_code=http_e.status_code,
+            content={
+                "status": "error",
+                "detail": http_e.detail,
+                "message": "An error occurred while processing your request."
             }
-            
-        except Exception as e:
-            # Log the error
-            print(f"Error fetching contact messages: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to fetch contact messages: {str(e)}")
+        )
     
-    @app.put("/api/admin/contact-messages/{message_id}", response_model=dict)
-    async def update_contact_message_status(message_id: str, status: str):
-        """
-        Update the status of a contact message
-        
-        Parameters:
-        - message_id: The ID of the message to update
-        - status: The new status ("read", "unread", "archived")
-        
-        Returns:
-        - JSON response with status
-        """
-        try:
-            # Validate status
-            valid_statuses = ["read", "unread", "archived"]
-            if status not in valid_statuses:
-                raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
-            
-            # Update the message status
-            result = supabase_client.table("contact_messages").update({
-                "status": status,
-                "updated_at": datetime.now().isoformat()
-            }).eq("id", message_id).execute()
-            
-            # Check if message was found
-            if result.data is None or len(result.data) == 0:
-                raise HTTPException(status_code=404, detail="Message not found")
-                
-            # Return success
-            return {
-                "status": "success",
-                "message": f"Message status updated to {status}"
+    except Exception as e:
+        print(f"Contact form submission error: {e}")
+        # Return a proper JSON response even in case of error
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "detail": str(e),
+                "message": "An error occurred while processing your request."
             }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            # Log the error
-            print(f"Error updating message status: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to update message status: {str(e)}")
-    
-    @app.delete("/api/admin/contact-messages/{message_id}", response_model=dict)
-    async def delete_contact_message(message_id: str):
-        """
-        Delete a contact message
-        
-        Parameters:
-        - message_id: The ID of the message to delete
-        
-        Returns:
-        - JSON response with status
-        """
-        try:
-            # Delete the message
-            result = supabase_client.table("contact_messages").delete().eq("id", message_id).execute()
-            
-            # Check for errors
-            if result.data is None:
-                raise HTTPException(status_code=404, detail="Message not found")
-            
-            # Return success
-            return {
-                "status": "success",
-                "message": "Message deleted successfully"
-            }
-            
-        except Exception as e:
-            # Log the error
-            print(f"Error deleting message: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to delete message: {str(e)}")
+        )

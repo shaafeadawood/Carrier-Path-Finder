@@ -1,0 +1,366 @@
+"""
+Main FastAPI application for Career Path Finder.
+
+This module initializes the FastAPI application and sets up all routes and dependencies.
+"""
+
+from fastapi import FastAPI, Request, Query, status, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+from supabase import create_client, Client
+import os
+import sys
+import uvicorn
+from dotenv import load_dotenv
+
+# Add parent directory to path to make imports work properly
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Load environment variables from .env file if available
+load_dotenv()
+
+# Import our custom modules
+from backend.core.file_processing import extract_text_from_file
+from backend.core.ai_helpers import parse_cv_text, extract_name, extract_email, extract_phone
+from backend.core.ai_helpers import extract_skills, extract_education, extract_experience, extract_projects, extract_interests
+from backend.core.cache_utils import get_cache_key, get_from_cache, save_to_cache
+
+# Import API modules
+from backend.recommendation_api import add_recommendation_routes
+from backend.api.cv_parser import add_cv_routes, router as cv_parser_router
+from backend.api.roadmap_api import add_roadmap_routes
+from backend.api.contact_api import router as contact_router, get_supabase as contact_get_supabase
+from backend.api.auth_api import router as auth_router, get_supabase as auth_get_supabase
+from backend.api.admin_api import router as admin_router, get_supabase as admin_get_supabase
+
+# Import job recommendation modules
+from backend.job_recommendation import get_job_recommendations
+from backend.career_path_progression import get_career_path_recommendations
+
+# Import LangGraph workflow
+from backend.workflows.langgraph_workflow import run_workflow_with_cv
+
+# Create FastAPI app
+app = FastAPI(
+    title="Career Path Finder API", 
+    description="Backend API for the Career Path Finder application",
+    version="1.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For development only! Use specific origins in production.
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Define models
+class Profile(BaseModel):
+    name: str
+    email: str
+    education: str    # needed
+    experience: str
+    projects: str
+    interests: str
+    skills: List[str]
+
+# Get Supabase credentials from environment variables
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+
+# Check if environment variables are set
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("Warning: SUPABASE_URL or SUPABASE_SERVICE_KEY not found in environment variables.")
+    print("Falling back to default values. This is not recommended for production.")
+    SUPABASE_URL = "https://vdbgrhvcduaxabvbwxui.supabase.co"
+    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZkYmdyaHZjZHVheGFidmJ3eHVpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTU5NTMwMiwiZXhwIjoyMDcxMTcxMzAyfQ.j5-kqS9JnFLdeQ9NarC12yNr67SGrvNzKkDyYA18WWM"
+
+print(f"Connecting to Supabase at {SUPABASE_URL}")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Create a function to get Supabase client
+def get_supabase():
+    return supabase
+
+# --- Add POST endpoint to save user profile ---
+@app.post("/api/user/profile")
+async def save_profile(profile: Profile):
+    """Save or update a user profile to the database."""
+    print("Received profile:", profile.dict())
+    try:
+        # Check if user already exists (by email)
+        existing = supabase.table("users").select("*").eq("email", profile.email).execute()
+        user_data = None
+        if existing.data and len(existing.data) > 0:
+            user_data = existing.data[0]
+        if user_data:
+            print("User already exists, updating profile.")
+            update_result = supabase.table("users").update({
+                "name": profile.name,
+                "profile_data": profile.dict()
+            }).eq("email", profile.email).execute()
+            print("Update result:", update_result)
+            return JSONResponse({"status": "updated", "profile": profile.dict()}, status_code=status.HTTP_200_OK)
+        # Insert new user
+        result = supabase.table("users").insert({
+            "name": profile.name,
+            "email": profile.email,
+            "profile_data": profile.dict()
+        }).execute()
+        print("Insert result:", result)
+        if result.data:
+            return JSONResponse({"status": "success", "profile": profile.dict()}, status_code=status.HTTP_201_CREATED)
+        else:
+            print("Supabase insert error:", result.error)
+            return JSONResponse({"status": "error", "message": "Failed to insert user profile.", "error": str(result.error)}, status_code=500)
+    except Exception as e:
+        print("Exception during Supabase insert:", e)
+        return JSONResponse({"status": "error", "message": "Exception occurred while saving profile.", "error": str(e)}, status_code=500)
+
+
+@app.get("/api/dashboard")
+async def get_dashboard(email: str):
+    """Get dashboard information for a user."""
+    # Fetch user profile
+    user_result = supabase.table("users").select("*").eq("email", email).execute()
+    user = None
+    if user_result.data and len(user_result.data) > 0:
+        user = user_result.data[0]
+    if not user:
+        return {"error": "User not found"}
+
+    # Fetch roadmap
+    roadmap_result = supabase.table("roadmaps").select("*").eq("user_id", user["id"]).execute()
+    roadmap = None
+    if roadmap_result.data and len(roadmap_result.data) > 0:
+        roadmap = roadmap_result.data[0]["roadmap_data"] if "roadmap_data" in roadmap_result.data[0] else None
+
+    # Get job recommendations for the dashboard
+    job_recommendations = get_job_recommendations(user["profile_data"], limit=3)
+    
+    # Get career path recommendations for the dashboard
+    career_path_recommendations = get_career_path_recommendations(user["profile_data"], limit=2)
+    
+    # Build dashboard response with real recommendations
+    dashboard = {
+        "user_id": user["id"],
+        "welcome_message": f"Welcome back, {user['name']}! 🚀",
+        "profile": {
+            "name": user["name"],
+            "career_goal": user["profile_data"].get("career_goal", "Not set"),
+            "skills": user["profile_data"].get("skills", []),
+            "level": user["profile_data"].get("level", "Beginner")
+        },
+        "job_recommendations": job_recommendations,
+        "career_paths": career_path_recommendations,
+        "progress": roadmap["progress"] if roadmap else {"percentage": 0, "milestones": []},
+        "kanban": roadmap["kanban"] if roadmap else {"backlog": [], "in_progress": [], "done": []},
+        "gamification": roadmap["gamification"] if roadmap else {"xp_points": 0, "badges": [], "streak": 0, "level": 1, "achievements": []},
+        "last_updated": roadmap_result.data[0]["updated_at"] if roadmap_result.data and "updated_at" in roadmap_result.data[0] else None
+    }
+    return dashboard
+
+# --- Legacy CV Upload and Parsing Endpoint (kept for backward compatibility) ---
+@app.post("/api/upload-cv")
+async def upload_cv(file: UploadFile = File(...), use_langgraph: bool = Query(True, description="Whether to use LangGraph for enhanced CV processing")):
+    """
+    Upload and parse a CV file (PDF or DOCX).
+    
+    This endpoint extracts text from the uploaded file and uses AI to parse it into structured data.
+    With LangGraph enabled, it will run the entire workflow to generate a roadmap.
+    """
+    # Validate file type
+    if not file.filename.lower().endswith(('.pdf', '.docx')):
+        raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported")
+    
+    try:
+        # Extract text from file
+        print(f"Extracting text from {file.filename}...")
+        extracted_text = await extract_text_from_file(file)
+        
+        if not extracted_text or len(extracted_text) < 50:  # Basic validation
+            print("Insufficient text extracted, using fallback methods")
+            # Still attempt fallback extraction even with limited text
+            fallback_data = {
+                "name": extract_name(extracted_text),
+                "email": extract_email(extracted_text),
+                "phone": extract_phone(extracted_text),
+                "skills": extract_skills(extracted_text) if extracted_text else ["Insufficient document text"],
+                "education": extract_education(extracted_text) if extracted_text else [{"institution": "Could not extract education information"}],
+                "work_experience": extract_experience(extracted_text) if extracted_text else [{"company": "Could not extract work experience"}],
+                "projects": extract_projects(extracted_text) if extracted_text else [{"name": "Could not extract projects"}],
+                "interests": extract_interests(extracted_text) if extracted_text else ["Document processing issue"]
+            }
+            return {
+                "status": "success",
+                "data": fallback_data,
+                "source": "fallback_extraction",
+                "message": "Limited text extracted from document. Results may be incomplete."
+            }
+        
+        # Check cache first
+        cache_key = get_cache_key(extracted_text)
+        cached_result = get_from_cache(cache_key)
+        
+        if cached_result:
+            print("Using cached CV parsing result")
+            return {
+                "status": "success",
+                "data": cached_result,
+                "source": "cache"
+            }
+        
+        if use_langgraph:
+            # Process with LangGraph workflow
+            print("Processing CV with LangGraph workflow...")
+            try:
+                # Run the full LangGraph workflow
+                workflow_result = await run_workflow_with_cv(extracted_text)
+                
+                if "error" in workflow_result and workflow_result["error"]:
+                    print(f"Error in LangGraph workflow: {workflow_result['error']}")
+                    # Fall back to basic parsing
+                    parsed_cv = await parse_cv_text(extracted_text)
+                else:
+                    # Extract the parsed profile from the workflow result
+                    parsed_cv = workflow_result.get("parsed_profile", {})
+                    
+                    # Add additional data from workflow for frontend use
+                    if workflow_result.get("skills_analysis"):
+                        parsed_cv["skills_analysis"] = workflow_result["skills_analysis"]
+                    
+                    if workflow_result.get("career_recommendations"):
+                        parsed_cv["career_recommendations"] = workflow_result["career_recommendations"]
+                
+                # Save to cache for future use
+                save_to_cache(cache_key, parsed_cv)
+                
+                return {
+                    "status": "success",
+                    "data": parsed_cv,
+                    "workflow_result": {
+                        "skills_analysis": workflow_result.get("skills_analysis"),
+                        "career_recommendations": workflow_result.get("career_recommendations"),
+                        "roadmap": workflow_result.get("roadmap")
+                    },
+                    "source": "langgraph"
+                }
+                
+            except Exception as workflow_error:
+                print(f"LangGraph workflow error: {workflow_error}")
+                # Fall back to basic parsing
+                print("Falling back to basic parsing...")
+        
+        # Parse the extracted text with basic methods
+        print("Parsing CV text with basic AI...")
+        parsed_cv = await parse_cv_text(extracted_text)
+        
+        # Handle different response formats
+        if "api_error" in parsed_cv:
+            # This is the fallback data from our extraction methods
+            print(f"Using fallback data due to API error: {parsed_cv['api_error']}")
+            result_data = parsed_cv.get("parsed_data", {})
+            save_to_cache(cache_key, result_data)
+            return {
+                "status": "success",
+                "data": result_data,
+                "source": "fallback",
+                "message": parsed_cv.get("message", "Using basic extraction due to API limits")
+            }
+        elif "error" in parsed_cv:
+            # Still return what we have instead of raising an exception
+            print(f"Error in parsing: {parsed_cv['error']}")
+            fallback_data = {
+                "name": extract_name(extracted_text),
+                "email": extract_email(extracted_text),
+                "phone": extract_phone(extracted_text),
+                "skills": extract_skills(extracted_text),
+                "education": extract_education(extracted_text),
+                "work_experience": extract_experience(extracted_text),
+                "projects": extract_projects(extracted_text),
+                "interests": extract_interests(extracted_text)
+            }
+            return {
+                "status": "partial",
+                "data": fallback_data,
+                "error": parsed_cv["error"]
+            }
+        else:
+            # Successful parsing
+            save_to_cache(cache_key, parsed_cv)
+            return {
+                "status": "success",
+                "data": parsed_cv,
+                "source": "basic_ai"
+            }
+    except Exception as e:
+        print(f"Error processing CV: {e}")
+        # Instead of failing, return a fallback response
+        try:
+            # Still try to extract basic info
+            fallback_data = {
+                "name": extract_name(extracted_text if 'extracted_text' in locals() else ""),
+                "email": extract_email(extracted_text if 'extracted_text' in locals() else ""),
+                "phone": extract_phone(extracted_text if 'extracted_text' in locals() else ""),
+                "skills": extract_skills(extracted_text if 'extracted_text' in locals() else ""),
+                "education": extract_education(extracted_text if 'extracted_text' in locals() else ""),
+                "work_experience": extract_experience(extracted_text if 'extracted_text' in locals() else ""),
+                "projects": extract_projects(extracted_text if 'extracted_text' in locals() else ""),
+                "interests": extract_interests(extracted_text if 'extracted_text' in locals() else "")
+            }
+            
+            return {
+                "status": "error_with_fallback",
+                "data": fallback_data,
+                "error": str(e)
+            }
+        except Exception as fallback_error:
+            # If even fallback fails, just return the error
+            print(f"Fallback extraction also failed: {fallback_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to process CV: {str(e)}. Fallback extraction also failed: {str(fallback_error)}"
+            )
+
+# --- Setup API routes from each module ---
+
+# Function to register API routes
+def register_api_routes():
+    """Register all API routers with the FastAPI app."""
+    # Add recommendation routes
+    add_recommendation_routes(app)
+    
+    # Add CV parser routes
+    add_cv_routes(app)
+    
+    # Add roadmap routes
+    add_roadmap_routes(app)
+    
+    # Add our improved CV parser routes with dependency on Supabase
+    from backend.api.cv_parser import get_supabase as cv_parser_get_supabase
+    app.dependency_overrides[cv_parser_get_supabase] = get_supabase
+    app.include_router(cv_parser_router, prefix="/api")
+    
+    # Add contact API router with Supabase dependency override
+    app.dependency_overrides[contact_get_supabase] = get_supabase
+    app.include_router(contact_router)
+    
+    # Add auth API router with Supabase dependency override
+    app.dependency_overrides[auth_get_supabase] = get_supabase
+    app.include_router(auth_router)
+    
+    # Add admin API router with Supabase dependency override
+    app.dependency_overrides[admin_get_supabase] = get_supabase
+    app.include_router(admin_router)
+
+# Register all API routes
+register_api_routes()
+
+# Run the FastAPI app when this script is executed directly
+if __name__ == "__main__":
+    print("Starting Career Path Finder API server...")
+    uvicorn.run(app, host="127.0.0.1", port=8000)
