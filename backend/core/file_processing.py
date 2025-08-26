@@ -1,37 +1,24 @@
 import io
-import os
 import docx
 import PyPDF2
 from fastapi import UploadFile
-from typing import Union
 
-async def extract_text_from_file(file: Union[UploadFile, str]) -> str:
+async def extract_text_from_file(file: UploadFile) -> str:
     """
     Extract text content from uploaded CV files (PDF or DOCX).
     
     Args:
-        file (Union[UploadFile, str]): The uploaded file or file path
+        file (UploadFile): The uploaded file
         
     Returns:
         str: Extracted text content
     """
-    # Handle both UploadFile and filepath
-    if isinstance(file, str):
-        # It's a filepath
-        print(f"Processing file from path: {file}")
-        filename = os.path.basename(file)
-        with open(file, 'rb') as f:
-            content = f.read()
-    else:
-        # It's an UploadFile
-        print(f"Processing uploaded file: {file.filename}, content type: {file.content_type}")
-        content = await file.read()
-        filename = file.filename
-    
+    print(f"Processing file: {file.filename}, content type: {file.content_type}")
+    content = await file.read()
     text = ""
     
     # Process based on file type
-    if filename.lower().endswith('.pdf'):
+    if file.filename.lower().endswith('.pdf'):
         # PDF processing
         try:
             print("Processing PDF file...")
@@ -45,7 +32,7 @@ async def extract_text_from_file(file: Union[UploadFile, str]) -> str:
             print(f"Error extracting PDF text: {e}")
             text = ""
     
-    elif filename.lower().endswith('.docx'):
+    elif file.filename.lower().endswith('.docx'):
         # DOCX processing
         try:
             print("Processing DOCX file...")
@@ -57,11 +44,10 @@ async def extract_text_from_file(file: Union[UploadFile, str]) -> str:
             print(f"Error extracting DOCX text: {e}")
             text = ""
     else:
-        print(f"Unsupported file type: {filename}")
+        print(f"Unsupported file type: {file.filename}")
         
-    # Reset file cursor for potential future use if it's an UploadFile
-    if not isinstance(file, str):
-        await file.seek(0)
+    # Reset file cursor for potential future use
+    await file.seek(0)
     
     print(f"Final extracted text length: {len(text)}")
     if len(text) > 100:

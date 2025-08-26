@@ -1,12 +1,10 @@
-"""
-API module for Career Path Finder application.
+# API module for Career Path Finder backend
+# Contains all API endpoint definitions
 
-This package contains all API endpoints for the application.
-"""
-
-# Import all API routers to make them available when importing from this package
-from .admin_api import router as admin_router
-from .auth_api import router as auth_router  
-from .contact_api import router as contact_router
-from .cv_parser import router as cv_parser_router
-from .roadmap_api import router as roadmap_router
+# Make API modules importable
+from api.cv_parser import add_cv_routes
+from api.roadmap_api import add_roadmap_routes
+from api.contact_api import add_contact_routes
+from api.recommendation_api import add_recommendation_routes
+from api.admin_api import add_admin_routes
+from api.auth_api import add_auth_routes
