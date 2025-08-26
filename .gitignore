@@ -1,5 +1,6 @@
 # Node.js / Frontend
 node_modules/
+.vscode
 dist/
 dist-ssr/
 *.local
