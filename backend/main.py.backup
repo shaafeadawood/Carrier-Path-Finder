@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, Request, Query, status, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,94 +14,18 @@ load_dotenv()
 # Import our custom modules
 from backend.core.file_processing import extract_text_from_file
 from backend.core.ai_helpers import parse_cv_text
-from backend.core.job_recommendation import get_job_recommendations
 from backend.core.gemini_helpers import parse_cv_with_gemini
 
 # Import API modules
 from backend.api.recommendation_api import add_recommendation_routes
 from backend.api.cv_parser import add_cv_routes
+from backend.api.roadmap_api import add_roadmap_routes
 from backend.api.contact_api import router as contact_router
 from backend.api.auth_api import router as auth_router
 from backend.api.admin_api import router as admin_router
 
 # Import our improved CV parser
 from backend.api.cv_parser import router as cv_parser_router
-
-app = FastAPI(title="Career Path Finder API", 
-              description="Backend API for the Career Path Finder application",
-              version="1.0.0")
-
-# --- Add GET endpoint to fetch user roadmap by email ---
-@app.get("/api/roadmap")
-async def get_roadmap(email: str):
-    """
-    Fetch the user's roadmap by email. Returns the roadmap in the structure expected by the frontend.
-    """
-    try:
-        # Fetch user profile
-        user_result = supabase.table("profiles").select("*").eq("email", email).execute()
-        user = None
-        if user_result.data and len(user_result.data) > 0:
-            user = user_result.data[0]
-        if not user:
-            return {"error": "User not found"}
-
-        # Fetch roadmap by user_id
-        roadmap_result = supabase.table("roadmaps").select("*").eq("user_id", user["id"]).execute()
-        roadmap = None
-        if roadmap_result.data and len(roadmap_result.data) > 0:
-            roadmap = roadmap_result.data[0]["roadmap_data"] if "roadmap_data" in roadmap_result.data[0] else None
-
-        # If no roadmap, return empty structure
-        if not roadmap:
-            return {"roadmap": None}
-
-        # Ensure all required fields exist for frontend
-        roadmap.setdefault("roadmap_summary", "")
-        roadmap.setdefault("progress", {"percentage": 0, "milestones": []})
-        roadmap.setdefault("kanban", {"backlog": [], "in_progress": [], "done": []})
-        roadmap.setdefault("gamification", {"xp_points": 0, "badges": [], "streak": 0, "level": 1, "achievements": []})
-        roadmap.setdefault("career_recommendations", [])
-        roadmap.setdefault("skills_analysis", {})
-        roadmap.setdefault("target_career_path", {})
-
-        return {"roadmap": roadmap}
-    except Exception as e:
-        print(f"Error fetching roadmap: {e}")
-        return {"error": str(e)}
-
-# --- Add GET endpoint to fetch user roadmap by email ---
-
-# (Place this after app = FastAPI(...))
-
-
-from fastapi import FastAPI, Request, Query, status, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-from supabase import create_client, Client
-import os
-from dotenv import load_dotenv
-
-# Load environment variables from .env file if available
-load_dotenv()
-
-# Import our custom modules
-from backend.core.file_processing import extract_text_from_file
-from backend.core.ai_helpers import parse_cv_text
-from backend.core.job_recommendation import get_job_recommendations
-from backend.core.gemini_helpers import parse_cv_with_gemini
-
-# Import API modules
-from backend.api.recommendation_api import add_recommendation_routes
-from api.cv_parser import add_cv_routes
-from api.contact_api import router as contact_router
-from api.auth_api import router as auth_router
-from api.admin_api import router as admin_router
-
-# Import our improved CV parser
-from api.cv_parser import router as cv_parser_router
 
 app = FastAPI(title="Career Path Finder API", 
               description="Backend API for the Career Path Finder application",
@@ -144,39 +69,39 @@ async def save_profile(profile: Profile):
     print("Received profile:", profile.dict())
     try:
         # Check if user already exists (by email)
-        existing = supabase.table("profiles").select("*").eq("email", profile.email).execute()
+        existing = supabase.table("users").select("*").eq("email", profile.email).execute()
         user_data = None
         if existing.data and len(existing.data) > 0:
             user_data = existing.data[0]
         if user_data:
             print("User already exists, updating profile.")
-            update_result = supabase.table("profiles").update({
+            update_result = supabase.table("users").update({
                 "name": profile.name,
                 "profile_data": profile.dict()
             }).eq("email", profile.email).execute()
             print("Update result:", update_result)
             return JSONResponse({"status": "updated", "profile": profile.dict()}, status_code=status.HTTP_200_OK)
-        # Upsert new profile
-        result = supabase.table("profiles").upsert({
+        # Insert new user
+        result = supabase.table("users").insert({
             "name": profile.name,
             "email": profile.email,
             "profile_data": profile.dict()
         }).execute()
-        print("Upsert result:", result)
+        print("Insert result:", result)
         if result.data:
             return JSONResponse({"status": "success", "profile": profile.dict()}, status_code=status.HTTP_201_CREATED)
         else:
-            print("Supabase upsert error:", result.error)
-            return JSONResponse({"status": "error", "message": "Failed to upsert user profile.", "error": str(result.error)}, status_code=500)
+            print("Supabase insert error:", result.error)
+            return JSONResponse({"status": "error", "message": "Failed to insert user profile.", "error": str(result.error)}, status_code=500)
     except Exception as e:
-        print("Exception during Supabase upsert:", e)
+        print("Exception during Supabase insert:", e)
         return JSONResponse({"status": "error", "message": "Exception occurred while saving profile.", "error": str(e)}, status_code=500)
 
 
 @app.get("/api/dashboard")
 async def get_dashboard(email: str):
     # Fetch user profile
-    user_result = supabase.table("profiles").select("*").eq("email", email).execute()
+    user_result = supabase.table("users").select("*").eq("email", email).execute()
     user = None
     if user_result.data and len(user_result.data) > 0:
         user = user_result.data[0]
@@ -217,36 +142,39 @@ async def get_dashboard(email: str):
     return dashboard
 
 # Import the caching utilities
-from core.cache_utils import get_cache_key, get_from_cache, save_to_cache
+from backend.core.cache_utils import get_cache_key, get_from_cache, save_to_cache
 
 # Import LangGraph workflow
-from workflows.langgraph_workflow import run_workflow_with_cv
+from backend.workflows.langgraph_workflow import run_workflow_with_cv
 
 # Add API routes
 add_recommendation_routes(app)
 add_cv_routes(app)
+add_roadmap_routes(app)
 
 # Add our improved CV parser routes with dependency on Supabase
 # Override the get_supabase dependency to return our already created client
+from backend.api.cv_parser import get_supabase as cv_parser_get_supabase
 
 # Override the dependency to return our configured client
 def get_supabase_override():
     return supabase
 
+app.dependency_overrides[cv_parser_get_supabase] = get_supabase_override
 app.include_router(cv_parser_router, prefix="/api")
 
 # Add contact API router with Supabase dependency override
-from api.contact_api import get_supabase as contact_get_supabase
+from backend.api.contact_api import get_supabase as contact_get_supabase
 app.dependency_overrides[contact_get_supabase] = get_supabase_override
 app.include_router(contact_router)
 
 # Add auth API router with Supabase dependency override
-from api.auth_api import get_supabase as auth_get_supabase
+from backend.api.auth_api import get_supabase as auth_get_supabase
 app.dependency_overrides[auth_get_supabase] = get_supabase_override
 app.include_router(auth_router)
 
 # Add admin API router with Supabase dependency override
-from api.admin_api import get_supabase as admin_get_supabase
+from backend.api.admin_api import get_supabase as admin_get_supabase
 app.dependency_overrides[admin_get_supabase] = get_supabase_override
 app.include_router(admin_router)
 

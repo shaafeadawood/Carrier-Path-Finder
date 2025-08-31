@@ -14,7 +14,7 @@ from backend.core.career_path_progression import get_career_path_recommendations
 from backend.core.skills_gap_analysis import analyze_skills_gap
 
 # Import LangGraph workflow
-from workflows.langgraph_workflow import run_workflow_with_cv, run_workflow_with_profile
+from backend.workflows.langgraph_workflow import run_workflow_with_cv, run_workflow_with_profile
 
 # Define the recommendation router
 recommendation_router = APIRouter()

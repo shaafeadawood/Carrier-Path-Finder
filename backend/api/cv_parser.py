@@ -9,9 +9,9 @@ from typing import Dict, Any, List, Optional
 import os
 import traceback
 
-from core.file_processing import extract_text_from_file
-from core.cache_utils import get_cache_key, get_from_cache, save_to_cache
-from workflows.langgraph_workflow import run_workflow_with_cv
+from backend.core.file_processing import extract_text_from_file
+from backend.core.cache_utils import get_cache_key, get_from_cache, save_to_cache
+from backend.workflows.langgraph_workflow import run_workflow_with_cv
 
 router = APIRouter()
 
@@ -127,7 +127,7 @@ async def parse_cv(
                 # Save to user profile if email provided
                 if email:
                     from main import supabase
-                    user_result = supabase.table("users").select("*").eq("email", email).execute()
+                    user_result = supabase.table("profiles").select("*").eq("email", email).execute()
                     
                     if user_result.data and len(user_result.data) > 0:
                         user = user_result.data[0]
@@ -143,7 +143,7 @@ async def parse_cv(
                             "updated_at": "now()"
                         }
                         
-                        supabase.table("users").update({"profile_data": profile_data}).eq("id", user["id"]).execute()
+                        supabase.table("profiles").update({"profile_data": profile_data}).eq("id", user["id"]).execute()
                         result["profile_updated"] = True
                 
                 return result
@@ -195,7 +195,7 @@ async def parse_cv(
             # Save to user profile if email provided
             if email:
                 from main import supabase
-                user_result = supabase.table("users").select("*").eq("email", email).execute()
+                user_result = supabase.table("profiles").select("*").eq("email", email).execute()
                 
                 if user_result.data and len(user_result.data) > 0:
                     user = user_result.data[0]
@@ -211,7 +211,7 @@ async def parse_cv(
                         "updated_at": "now()"
                     }
                     
-                    supabase.table("users").update({"profile_data": profile_data}).eq("id", user["id"]).execute()
+                    supabase.table("profiles").update({"profile_data": profile_data}).eq("id", user["id"]).execute()
                     return {
                         "status": "success",
                         "data": parsed_cv,

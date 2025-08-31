@@ -1,7 +1,7 @@
 import React from "react";
 import { ThemeProvider } from "./providers/ThemeProvider";
 import { Routes, Route } from "react-router-dom";
-import { UserProfileProvider } from './contexts/UserProfileProvider';
+import UserProfileProvider from './contexts/UserProfileProvider';
 import { ToastProvider } from './components/Toast';
 import Navbar from './components/Navbar';
 import Home from './pages/Home.jsx'

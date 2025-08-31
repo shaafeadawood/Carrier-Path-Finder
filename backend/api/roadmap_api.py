@@ -82,13 +82,12 @@ def add_recommendation_routes(app):
         try:
             # Get user profile from Supabase
             from main import supabase
-            user_result = supabase.table("users").select("*").eq("email", email).execute()
+            user_result = supabase.table("profiles").select("*").eq("email", email).execute()
             user = None
             if user_result.data and len(user_result.data) > 0:
                 user = user_result.data[0]
             if not user:
                 return {"error": "User not found"}
-            
             # Get recommendations
             recommendations = get_job_recommendations(user["profile_data"], limit=limit)
             return {"recommendations": recommendations}
@@ -102,13 +101,12 @@ def add_recommendation_routes(app):
         try:
             # Get user profile from Supabase
             from main import supabase
-            user_result = supabase.table("users").select("*").eq("email", email).execute()
+            user_result = supabase.table("profiles").select("*").eq("email", email).execute()
             user = None
             if user_result.data and len(user_result.data) > 0:
                 user = user_result.data[0]
             if not user:
                 return {"error": "User not found"}
-            
             # Get recommendations
             recommendations = get_career_path_recommendations(user["profile_data"], limit=limit)
             return {"recommendations": recommendations}
@@ -122,13 +120,12 @@ def add_recommendation_routes(app):
         try:
             # Get user profile from Supabase
             from main import supabase
-            user_result = supabase.table("users").select("*").eq("email", email).execute()
+            user_result = supabase.table("profiles").select("*").eq("email", email).execute()
             user = None
             if user_result.data and len(user_result.data) > 0:
                 user = user_result.data[0]
             if not user:
                 return {"error": "User not found"}
-            
             # Get skills gap analysis
             gap_analysis = analyze_skills_gap(user["profile_data"], job_id)
             return gap_analysis

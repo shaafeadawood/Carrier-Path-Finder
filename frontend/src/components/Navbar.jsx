@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { supabase } from '../../supabaseClient';
 import { useUserProfile } from '../contexts/useUserProfile';
 import DarkModeToggle from './DarkModeToggle';
@@ -45,9 +45,12 @@ function AdminLink() {
 }
 
 export default function Navbar() {
-  const navigate = useNavigate(); // eslint-disable-line no-unused-vars
+  // const navigate = useNavigate();
   const location = useLocation();
   const { session, userProfile } = useUserProfile();
+
+  // Detect if onboarding route is active
+  // const isOnboarding = location.pathname.startsWith('/onboarding');
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutMsg, setLogoutMsg] = useState("");
   
@@ -163,35 +166,13 @@ export default function Navbar() {
               <img src="/images/logo.png" alt="Career Compass Logo" className="h-12 w-auto" />
               <span className="text-xl font-bold hidden sm:inline-block">Career Compass</span>
             </Link>
-            
-            {/* Desktop Navigation */}
+            {/* Desktop Navigation - minimal during onboarding */}
             <nav className="hidden md:flex items-center space-x-6">
               <Link to="/" className={`py-2 px-1 transition-colors duration-200 ${isActive('/')}`}>Home</Link>
-              
-              {isAuthenticated && (
-                <>
-                  <Link to="/dashboard" className={`py-2 px-1 transition-colors duration-200 ${isActive('/dashboard')}`}>Dashboard</Link>
-                  <Link to="/cv" className={`py-2 px-1 transition-colors duration-200 ${isActive('/cv')}`}>CV Manager</Link>
-                  <Link to="/learning-plan" className={`py-2 px-1 transition-colors duration-200 ${isActive('/learning-plan')}`}>Learning Plan</Link>
-                </>
-              )}
-              
-              {!isAuthenticated && (
-                <>
-                  <Link to="/signup" className="py-2 px-1 transition-colors duration-200 text-white/80 hover:text-white">
-                    Features
-                  </Link>
-                  <Link to="/contact" className="py-2 px-1 transition-colors duration-200 text-white/80 hover:text-white">
-                    Contact
-                  </Link>
-                </>
-              )}
-              
-              {isAuthenticated && (
-                <Link to="/contact" className="py-2 px-1 transition-colors duration-200 text-white/80 hover:text-white">
-                  Contact
-                </Link>
-              )}
+              <Link to="/contact" className="py-2 px-1 transition-colors duration-200 text-white/80 hover:text-white">Contact</Link>
+              <Link to="/about" className="py-2 px-1 transition-colors duration-200 text-white/80 hover:text-white">About</Link>
+              {/* Hide all dashboard/app links during onboarding */}
+              {/* Add more links here if needed, but keep minimal for onboarding */}
             </nav>
             
             {/* Right side: Auth, User menu, Theme toggle */}
@@ -235,7 +216,6 @@ export default function Navbar() {
                       className="ring-2 ring-white/30"
                     />
                   </button>
-                  
                   {/* User dropdown menu */}
                   {isUserMenuOpen && (
                     <div 
@@ -246,25 +226,14 @@ export default function Navbar() {
                         <p className="text-sm font-medium text-gray-900 dark:text-white">{userName}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{userEmail}</p>
                       </div>
-                      
                       <Link 
                         to="/onboarding" 
                         className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                       >
                         Your Profile
                       </Link>
-                      
-                      <Link 
-                        to="/dashboard" 
-                        className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                      >
-                        Dashboard
-                      </Link>
-
                       <AdminLink />
-                      
                       <hr className="my-1 border-gray-200 dark:border-gray-700" />
-                      
                       <button
                         onClick={handleLogout}
                         className="flex w-full items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -291,10 +260,8 @@ export default function Navbar() {
                   )}
                 </div>
               )}
-              
               {/* Dark mode toggle */}
               <DarkModeToggle />
-              
               {/* Mobile menu button */}
               <button
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -319,25 +286,14 @@ export default function Navbar() {
           {isMobileMenuOpen && (
             <nav className="md:hidden bg-indigo-800 shadow-inner pb-3 px-4">
               <Link to="/" className="block py-2.5 text-white border-b border-indigo-700">Home</Link>
-              
-              {isAuthenticated ? (
-                <>
-                  <Link to="/dashboard" className="block py-2.5 text-white border-b border-indigo-700">Dashboard</Link>
-                  <Link to="/onboarding" className="block py-2.5 text-white border-b border-indigo-700">Profile</Link>
-                  <Link to="/cv" className="block py-2.5 text-white border-b border-indigo-700">CV Manager</Link>
-                  <Link to="/learning-plan" className="block py-2.5 text-white border-b border-indigo-700">Learning Plan</Link>
-                  <div className="py-2.5 border-b border-indigo-700">
-                    <AdminLink />
-                  </div>
-                  <Link to="/contact" className="block py-2.5 text-white">Contact Us</Link>
-                </>
-              ) : (
+              <Link to="/contact" className="block py-2.5 text-white border-b border-indigo-700">Contact</Link>
+              <Link to="/about" className="block py-2.5 text-white border-b border-indigo-700">About</Link>
+              {!isAuthenticated ? (
                 <>
                   <Link to="/login" className="block py-2.5 text-white border-b border-indigo-700">Log In</Link>
                   <Link to="/signup" className="block py-2.5 text-white border-b border-indigo-700">Sign Up</Link>
-                  <Link to="/contact" className="block py-2.5 text-white">Contact Us</Link>
                 </>
-              )}
+              ) : null}
             </nav>
           )}
         </div>

@@ -2,71 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { UserProfileContext } from './UserProfileContext.js';
 import { supabase } from '../../supabaseClient';
 
-export const UserProfileProvider = ({ children }) => {
+// The main provider component
+const UserProfileProvider = ({ children }) => {
   const [userProfile, setUserProfile] = useState(null);
-  const [session, setSession] = useState(null);
+  const [session] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Get session and subscribe to auth changes
   useEffect(() => {
-    const getSession = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        
-        if (error) throw error;
-        setSession(session);
-        console.log("Initial session loaded:", session ? "User is logged in" : "No active session");
-        
-        // Set up auth subscription
-        const { data: authListener } = supabase.auth.onAuthStateChange(
-          async (event, newSession) => {
-            console.log("Auth state changed:", event);
-            
-            if (event === 'SIGNED_IN') {
-              console.log("User signed in with new session");
-              setSession(newSession);
-              
-              // Clear any previous errors on new sign-in
-              setError(null);
-            } else if (event === 'SIGNED_OUT') {
-              console.log("User signed out");
-              setSession(null);
-              clearProfile();
-              
-              // Optional: redirect to login page on sign out
-              // window.location.href = '/login';
-            } else if (event === 'TOKEN_REFRESHED') {
-              console.log("Session token refreshed");
-              setSession(newSession);
-            } else if (event === 'USER_UPDATED') {
-              console.log("User data updated");
-              setSession(newSession);
-            }
-          }
-        );
-        
-        return () => {
-          if (authListener && authListener.subscription) {
-            authListener.subscription.unsubscribe();
-          }
-        };
-      } catch (err) {
-        console.error("Error getting auth session:", err);
-        setError("Authentication error. Please try logging in again.");
-        setLoading(false);
-      }
-    };
-    
-    getSession();
-  }, []);
-  
-  // Load user profile from Supabase when session changes
-  useEffect(() => {
+
     const loadUserProfile = async () => {
-      setLoading(true);
-      setError(null);
-      
       try {
         // If no session, clear profile and return
         if (!session) {
@@ -74,10 +19,10 @@ export const UserProfileProvider = ({ children }) => {
           setLoading(false);
           return;
         }
-        
+
         // Try to fetch from Supabase
         console.log("Fetching profile from Supabase for user:", session.user.id);
-        
+
         // First check if the table exists and create it if it doesn't
         // This ensures new installations work properly
         try {
@@ -86,7 +31,7 @@ export const UserProfileProvider = ({ children }) => {
             .from('profiles')
             .select('count')
             .limit(1);
-            
+
           if (tableCheckError && tableCheckError.code === '42P01') {
             console.log("Profiles table doesn't exist yet, application might be in initial setup");
           }
@@ -94,16 +39,23 @@ export const UserProfileProvider = ({ children }) => {
           console.warn("Error checking profiles table:", tableErr);
           // Continue with profile fetch attempt anyway
         }
-        
+
         const { data, error } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', session.user.id)
           .single();
-        
+
+        // Get user metadata from session for fallback
+        const userMeta = {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User'
+        };
+
         if (error && error.code !== 'PGRST116') { // PGRST116 is no rows returned
           console.warn("Error fetching profile from Supabase:", error);
-          
+
           // Check if this might be a permissions issue or missing table
           if (error.code === '42P01' || error.message.includes('permission denied')) {
             throw new Error("Database setup issue. Please check Supabase configuration.");
@@ -111,52 +63,59 @@ export const UserProfileProvider = ({ children }) => {
             throw error;
           }
         }
-        
-        // Get user metadata from session for fallback
-        const userMeta = {
-          id: session.user.id,
-          email: session.user.email,
-          name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User'
-        };
-        
+
         if (data) {
+          // ...existing code for handling found profile...
+          // (from previous patch, lines 81-121)
           console.log("✅ Profile successfully loaded from Supabase");
-          
-          // Check if profile needs metadata updates from latest session
           const updatedProfile = {
-            ...data,
-            // Ensure we always have these basic fields
+            id: data.id || userMeta.id,
             email: data.email || userMeta.email,
             name: data.name || userMeta.name,
-            last_sign_in: new Date().toISOString()
+            education: data.education || '',
+            experience: data.experience || '',
+            projects: data.projects || '',
+            interests: data.interests || '',
+            skills: data.skills || [],
+            last_sign_in: new Date().toISOString(),
+            ...data
           };
-          
           setUserProfile(updatedProfile);
-          
-          // Update local storage
           localStorage.setItem('userProfile', JSON.stringify(updatedProfile));
-          
-          // Silently update profile with latest sign-in time
           supabase
             .from('profiles')
-            .upsert(updatedProfile)
+            .upsert(updatedProfile, { onConflict: 'id' })
             .then(({error}) => {
               if (error) console.warn("Failed to update last sign in time:", error);
             });
-            
+          try {
+            const backendProfile = {
+              name: updatedProfile.name,
+              email: updatedProfile.email,
+              education: updatedProfile.education,
+              experience: updatedProfile.experience,
+              projects: updatedProfile.projects,
+              interests: updatedProfile.interests,
+              skills: updatedProfile.skills
+            };
+            await fetch('http://127.0.0.1:8000/api/user/profile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(backendProfile),
+            });
+          } catch (backendErr) {
+            console.warn("Failed to sync profile to backend:", backendErr);
+          }
         } else {
+          // ...existing code for handling no profile found...
+          // (from previous patch, lines 121-161, 161-201)
           console.log("No existing profile found, checking localStorage fallback");
-          
-          // No profile in Supabase, try localStorage as fallback
           const savedProfile = localStorage.getItem('userProfile');
           let profileData;
-          
           if (savedProfile) {
             try {
               profileData = JSON.parse(savedProfile);
               console.log("Profile loaded from localStorage:", profileData);
-              
-              // Check if localStorage profile matches current user
               if (profileData.id !== session.user.id) {
                 console.log("localStorage profile is for a different user, creating new profile");
                 profileData = createNewUserProfile(session);
@@ -169,26 +128,41 @@ export const UserProfileProvider = ({ children }) => {
             console.log("No profile in localStorage, creating new profile");
             profileData = createNewUserProfile(session);
           }
-          
           setUserProfile(profileData);
-          
-          // Create profile in Supabase
+          const completeProfile = {
+            id: profileData.id,
+            email: profileData.email,
+            name: profileData.name,
+            education: profileData.education || '',
+            experience: profileData.experience || '',
+            projects: profileData.projects || '',
+            interests: profileData.interests || '',
+            skills: profileData.skills || [],
+            last_sign_in: new Date().toISOString(),
+            ...profileData
+          };
           const { error: createError } = await supabase
             .from('profiles')
-            .upsert(profileData);
-            
+            .upsert(completeProfile, { onConflict: 'id' });
           if (createError) {
             console.error("Failed to create profile in Supabase:", createError);
           } else {
             console.log("✅ New profile created in Supabase");
           }
-          
-          // Also sync to backend
           try {
+            const backendProfile = {
+              name: completeProfile.name,
+              email: completeProfile.email,
+              education: completeProfile.education,
+              experience: completeProfile.experience,
+              projects: completeProfile.projects,
+              interests: completeProfile.interests,
+              skills: completeProfile.skills
+            };
             await fetch('http://127.0.0.1:8000/api/user/profile', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(profileData),
+              body: JSON.stringify(backendProfile),
             });
           } catch (backendErr) {
             console.warn("Failed to sync new profile to backend:", backendErr);
@@ -197,8 +171,6 @@ export const UserProfileProvider = ({ children }) => {
       } catch (err) {
         console.error('Error loading user profile:', err);
         setError('Failed to load user profile. Please refresh the page and try again.');
-        
-        // Try to use cached version as last resort
         const savedProfile = localStorage.getItem('userProfile');
         if (savedProfile) {
           try {
@@ -296,7 +268,7 @@ export const UserProfileProvider = ({ children }) => {
         .upsert({ 
           id: session.user.id,
           ...updatedProfile 
-        });
+        }, { onConflict: 'id' });
         
       if (supabaseError) {
         console.error("Supabase profile update failed:", supabaseError);
@@ -399,3 +371,5 @@ export const UserProfileProvider = ({ children }) => {
     </UserProfileContext.Provider>
   );
 };
+
+export default UserProfileProvider;

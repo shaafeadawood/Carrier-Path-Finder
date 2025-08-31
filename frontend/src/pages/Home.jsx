@@ -1,24 +1,26 @@
 import FeatureCard from "../components/FeatureCard";
 import TestimonialCard from "../components/TestimonialCard";
+import { LucideIcons } from "../components/LucideIcons";
+import { Compass, Rocket, UserCheck } from 'lucide-react';
 
 const features = [
 	{
-		icon: "🧭",
+		icon: <Compass className="h-8 w-8" />, // Lucide
 		title: "Personalized Roadmap",
 		desc: "Get a learning path tailored to your skills, goals, and interests.",
 	},
 	{
-		icon: "📈",
+		icon: <Rocket className="h-8 w-8" />, // Lucide
 		title: "Career Progress Tracking",
 		desc: "Track your growth and milestones as you advance.",
 	},
 	{
-		icon: "🤖",
+		icon: <LucideIcons.ai className="h-8 w-8" />, // Lucide
 		title: "AI Career Guidance",
 		desc: "Smart suggestions powered by Gemini API for your next steps.",
 	},
 	{
-		icon: "📝",
+		icon: <LucideIcons.resume className="h-8 w-8" />, // Lucide
 		title: "Resume/Skill Evaluation",
 		desc: "Analyze your resume and skills to find improvement areas.",
 	},
@@ -52,27 +54,48 @@ export default function Home() {
 	return (
 		<div className="bg-white dark:bg-gray-900 transition-colors duration-300 min-h-screen flex flex-col">
 			<main className="flex-1">
-				{/* Hero Section */}
-				<section className="relative flex flex-col-reverse md:flex-row items-center justify-between px-6 py-16 max-w-7xl mx-auto">
-					<div className="w-full md:w-1/2 text-center md:text-left">
-						<h1 className="text-4xl sm:text-5xl font-extrabold text-indigo-700 dark:text-indigo-300 mb-4 leading-tight">
-							Find Your Ideal Career Path
-						</h1>
-						<p className="text-lg sm:text-xl text-gray-600 dark:text-gray-300 mb-8">
-							AI-powered guidance, personalized roadmaps, and real progress
-							tracking. Start your journey today!
-						</p>
-						<a
-							href="/onboarding"
-							className="inline-block px-8 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-lg shadow-lg hover:scale-105 hover:from-indigo-700 hover:to-purple-700 transition"
-						>
-							Start Your Career Journey
-						</a>
-					</div>
-					<div className="w-full md:w-1/2 flex justify-center mb-10 md:mb-0">
-						{/* Removed hero image as requested */}
-					</div>
-				</section>
+								 {/* Hero Section */}
+								 <section className="relative flex flex-col-reverse md:flex-row items-center justify-between px-6 py-20 max-w-7xl mx-auto">
+									 <div className="w-full md:w-1/2 text-center md:text-left">
+										 <div className="flex items-center justify-center md:justify-start mb-4">
+											 <UserCheck className="h-12 w-12 text-indigo-600 dark:text-indigo-300 mr-2" />
+											 <span className="text-4xl sm:text-5xl font-extrabold text-indigo-700 dark:text-indigo-300 leading-tight">Career Compass</span>
+										 </div>
+										 <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">Find Your Ideal Career Path</h1>
+										 <p className="text-lg sm:text-xl text-gray-600 dark:text-gray-300 mb-8">
+											 AI-powered guidance, personalized roadmaps, and real progress tracking. Start your journey today!
+										 </p>
+										 <a
+											 href="/onboarding"
+											 className="inline-block px-8 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-lg shadow-lg hover:scale-105 hover:from-indigo-700 hover:to-purple-700 transition"
+										 >
+											 Start Your Career Journey
+										 </a>
+									 </div>
+									 <div className="w-full md:w-1/2 flex justify-center mb-10 md:mb-0">
+										 <div className="bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-indigo-900 dark:to-purple-900 rounded-full p-8 flex items-center justify-center shadow-xl">
+											 <Rocket className="h-24 w-24 text-indigo-600 dark:text-indigo-300" />
+										 </div>
+									 </div>
+								 </section>
+							 {/* Get Started Section */}
+							 <section className="py-12 bg-white dark:bg-gray-900 border-t border-b border-gray-100 dark:border-gray-800">
+								 <div className="max-w-4xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-8">
+									 <div className="flex-1">
+										 <h3 className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 mb-2">Ready to take the next step?</h3>
+										 <p className="text-gray-600 dark:text-gray-300 mb-4">Sign up and get your personalized career roadmap in minutes. No credit card required.</p>
+										 <a
+											 href="/signup"
+											 className="inline-block px-6 py-2 rounded-lg bg-indigo-600 text-white font-semibold shadow hover:bg-indigo-700 transition"
+										 >
+											 Get Started Free
+										 </a>
+									 </div>
+									 <div className="flex-1 flex justify-center">
+										 <Compass className="h-20 w-20 text-indigo-500 dark:text-indigo-300" />
+									 </div>
+								 </div>
+							 </section>
 
 				{/* Features */}
 				<section className="py-16 bg-gray-50 dark:bg-gray-800 transition-colors duration-300">
